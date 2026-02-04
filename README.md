@@ -158,10 +158,8 @@ torchrun --nproc_per_node=8 rl_training.py \
 
 The RL training uses multiple reward signals:
 
-1. **Correctness Reward**: Binary reward for correct answer extraction
+1. **Correctness Reward**: Binary reward for correct answer extraction (negatively reinforced)
 2. **Path Alignment Reward**: Measures alignment with knowledge graph paths using token overlap
-3. **Thinking Quality Reward**: Evaluates reasoning structure and coherence (step-by-step reasoning)
-4. **Semantic Similarity Reward**: Compares model reasoning with correct option text
 
 ### Data Splitting Strategy
 
