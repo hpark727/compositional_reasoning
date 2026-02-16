@@ -276,6 +276,82 @@ def path_alignment_reward_func(prompts, completions, answer, **kwargs) -> List[f
     
     return rewards
 
+def thinking_quality_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
+    """Simple thinking reward emphasizing stepwise structure; gated on valid answer.
+    Range: 0..1.0
+    """
+    responses = [completion[0]["content"] for completion in completions]
+    thinkings = [extract_thinking(r) for r in responses]
+    predicted_answers = []
+    for r in responses:
+        letters = re.findall(r'\b[A-D]\b', extract_answer(r))
+        predicted_answers.append(letters[-1] if letters else "")
+
+    step_keywords = ['first', 'second', 'then', 'therefore', 'because', 'thus', 'next', 'finally', 'consider']
+
+    rewards: List[float] = []
+    for idx, th in enumerate(thinkings):
+        # Soft gate: small negative if no valid extracted answer to keep learning signal
+        if not predicted_answers[idx]:
+            tokens = normalize_tokens(th)
+            rep_factor = repetition_penalty_factor(tokens)
+            rewards.append(-0.1 * (1.0 - rep_factor))
+            continue
+        has_structure = 1.0 if len(th.strip()) >= 20 else 0.0
+        step_score = sum(1 for k in step_keywords if k in th.lower()) / max(1, len(step_keywords))
+        enum_steps = len(re.findall(r'(^|\n)\s*\d+[)\.-]', th))
+        enum_score = min(enum_steps / 3.0, 1.0)
+        rep_factor = repetition_penalty_factor(normalize_tokens(th))
+        base = (0.5 * has_structure + 0.3 * step_score + 0.2 * enum_score)
+        rewards.append(base * rep_factor)
+    return rewards
+
+
+
+def semantic_answer_similarity_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
+    """Reward semantic overlap between the model's thinking and the ground truth explanation.
+    Range: 0..1.0.
+    Compares model's <think> reasoning against expert explanation from question_and_explanation field.
+    """
+    responses = [completion[0]["content"] for completion in completions]
+    thinkings = [extract_thinking(r) for r in responses]
+
+    # Get ground truth explanations from dataset
+    gt_explanations = kwargs.get("gt_explanation", [None] * len(responses))
+    
+    rewards: List[float] = []
+    for idx, (thinking, gt_explanation) in enumerate(zip(thinkings, gt_explanations)):
+        # If no ground truth explanation available, skip
+        if not gt_explanation or not gt_explanation.strip():
+            rewards.append(0.0)
+            continue
+        
+        # Get model's thinking content
+        model_text = thinking.strip()
+        if not model_text:
+            rewards.append(0.0)
+            continue
+
+        # Compute Jaccard similarity between model thinking and ground truth explanation
+        gt_tokens = set(normalize_tokens(gt_explanation))
+        model_tokens_list = normalize_tokens(model_text)
+        model_tokens = set(model_tokens_list)
+        
+        if not gt_tokens or not model_tokens:
+            rewards.append(0.0)
+            continue
+
+        intersection = len(gt_tokens & model_tokens)
+        union = len(gt_tokens | model_tokens)
+        jaccard = intersection / max(1, union)
+        rep_factor = repetition_penalty_factor(model_tokens_list)
+        rewards.append(jaccard * rep_factor)
+        print(f"Explanation: {gt_explanation[:200]}")
+        print(f"Jaccard similarity: {jaccard}")
+        print(f"Repetition penalty factor: {rep_factor}")
+        print(f"Reward: {jaccard * rep_factor}")
+        print("--------------------------------")
+    
 
 
 
