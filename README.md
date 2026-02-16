@@ -1,12 +1,33 @@
 # Knowledge Graph-Guided Reinforcement Learning for LLMs
 
+[![arXiv](https://img.shields.io/badge/arXiv-2601.15160-b31b1b.svg)](https://arxiv.org/abs/2601.15160)
+[![License](https://img.shields.io/badge/License-Princeton-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
+
 This repository contains the implementation code for training large language models using knowledge graph-guided reinforcement learning, as described in our paper.
 
 ## 📄 Paper
 
-**[Knowledge Graph-Guided Reinforcement Learning for LLMs](https://arxiv.org/abs/2601.15160)**
+**[Knowledge Graph-Guided Reinforcement Learning for LLMs](https://arxiv.org/abs/2601.15160)** (arXiv:2601.15160)
 
-For detailed methodology, experimental results, and theoretical foundations, please refer to the paper.
+> Kansal, Yuval and Jha, Niraj K. *Knowledge Graphs are Implicit Reward Models: Path-Derived Signals Enable Compositional Reasoning.* arXiv preprint arXiv:2601.15160, 2026.
+
+For detailed methodology, experimental results, and theoretical foundations, please refer to the [paper](https://arxiv.org/abs/2601.15160).
+
+## ⚠️ Knowledge Graph Dependencies
+
+**Important:** Our method was developed and evaluated using a knowledge graph derived from the paradigm presented in [QA-GNN: Reasoning with Language Models and Knowledge Graphs for Question Answering](https://aclanthology.org/2021.naacl-main.45/) (Yasunaga et al., NAACL 2021). While the **overall algorithm (SFT → RL with path-derived rewards) is knowledge-graph agnostic**, the following components are **KG-dependent** and may require adaptation for your use case:
+
+- **Data loading and preprocessing** (`data_loader.py`, `data_prep.py`): Assumes specific schema (e.g., `question_and_explanation`, `paths`, `category`, `source_concept`, `target_concept`)
+- **Diversity-based filtering** (`create_filtered_dataset.py`): Relies on KG metadata (categories, concepts, path patterns)
+- **Path alignment reward** (`rl_training.py`): Expects `paths` field with KG structure
+
+**Users working with different knowledge graphs** may need to modify these scripts to match their data schema and KG representation. The core training pipeline (LoRA SFT + GRPO RL) remains flexible and model-agnostic.
+
+**Keywords:** `reinforcement-learning` · `knowledge-graph` · `large-language-models` · `GRPO` · `LoRA` · `question-answering` · `compositional-reasoning`
+
+---
 
 ## 🚀 Quick Start
 
@@ -24,12 +45,12 @@ pip install -r requirements.txt
 ### Prerequisites
 
 - Python 3.11+
-- PyTorch 2.0+
+- [PyTorch](https://pytorch.org/) 2.0+
 - CUDA 12.0+ (for GPU training)
-- DeepSpeed
-- Transformers
-- TRL (Transformer Reinforcement Learning)
-- PEFT (Parameter-Efficient Fine-Tuning)
+- [DeepSpeed](https://github.com/microsoft/DeepSpeed)
+- [Transformers](https://github.com/huggingface/transformers)
+- [TRL](https://github.com/huggingface/trl) (Transformer Reinforcement Learning)
+- [PEFT](https://github.com/huggingface/peft) (Parameter-Efficient Fine-Tuning)
 
 ## 📁 Repository Structure
 
@@ -37,7 +58,7 @@ pip install -r requirements.txt
 .
 ├── data_loader.py               # Data loading utilities (placeholder for training data)
 ├── data_prep.py                 # Dataset preprocessing and train/test splitting
-├── create_filtered_dataset.py  # Diversity-based filtering for SFT/RL splits
+├── create_filtered_dataset.py   # Diversity-based filtering for SFT/RL splits
 ├── sft_training.py              # Supervised Fine-Tuning with LoRA
 ├── rl_training.py               # Reinforcement Learning (GRPO) training
 ├── configs/
@@ -51,7 +72,7 @@ pip install -r requirements.txt
 
 ### 1. Data Preparation
 
-Our training pipeline uses a sophisticated **diversity-based filtering** approach to split data between SFT and RL:
+Our training pipeline uses a **diversity-based filtering** approach to split data between SFT and RL:
 
 #### Step 1: Create Filtered Dataset for RL
 
@@ -71,11 +92,11 @@ This script uses stratified sampling to maximize:
 - **Path pattern variety**: Diverse knowledge graph paths
 - **Node coverage**: Maximum unique nodes from KG
 
-The **filtered dataset** (5k examples) is used for **RL training**, while the **remaining examples** (~19k) are used for **SFT training**.
+The **filtered dataset** (5k examples) is used for **RL training**, while the **remaining examples** (~19.6k) are used for **SFT training**.
 
 #### Step 2: Preprocess for Training (Optional)
 
-The training scripts automatically handle data preprocessing. However, you can optionally preprocess datasets in advance:
+The training scripts automatically handle data preprocessing. However, you can **optionally** preprocess datasets in advance:
 
 **For SFT training:**
 ```bash
@@ -156,10 +177,16 @@ torchrun --nproc_per_node=8 rl_training.py \
 
 ## 🛠️ Reward Functions
 
-The RL training uses multiple reward signals:
+The RL training supports multiple reward signals. The default configuration uses **Correctness** and **Path Alignment**; two additional reward functions are available in the codebase and can be enabled as needed:
 
-1. **Correctness Reward**: Binary reward for correct answer extraction (negatively reinforced)
-2. **Path Alignment Reward**: Measures alignment with knowledge graph paths using token overlap
+| Reward Function | Description | Status |
+|-----------------|-------------|--------|
+| **Correctness Reward** | Binary reward for correct answer extraction. Positive reinforcement for correct A–D answers; negative reinforcement for wrong or missing answers. | ✅ Active |
+| **Path Alignment Reward** | Measures alignment between model reasoning (in `<think>` tags) and knowledge graph paths using token overlap. Rewards semantic coverage of KG concepts with repetition penalty. | ✅ Active |
+| **Thinking Quality Reward** | Evaluates reasoning structure and coherence. Scores step-by-step structure (e.g., "first", "therefore", "because"), enumerated steps, and minimum reasoning length. Gated on valid answer extraction. | ⚪ Available |
+| **Semantic Similarity Reward** | Compares model's thinking content with the ground truth reasoning trace distilled from Gemini 2.5 Pro using Jaccard similarity (intersection over union of normalized tokens). Encourages reasoning that aligns with the ground-truth explanation. Uses only `<think>` tags to match SFT format. | ⚪ Available |
+
+To enable the optional rewards, uncomment `thinking_quality_reward_func` and/or `semantic_answer_similarity_reward_func` in `rl_training.py`.
 
 ### Data Splitting Strategy
 
@@ -170,7 +197,7 @@ The training uses a **two-stage data split**:
    - Prioritizes rare concepts and path patterns
    - Maintains long-tail coverage
    
-2. **Remaining Dataset (SFT)**: ~19k examples for supervised fine-tuning
+2. **Remaining Dataset (SFT)**: ~19.6k examples for supervised fine-tuning
    - Provides broad coverage and pattern learning
    - Builds strong base capabilities
 
@@ -212,16 +239,23 @@ If you use this code in your research, please cite our paper:
 
 ## 📧 Contact
 
-For questions or issues, please open a GitHub issue or refer to the paper for contact information.
+For questions or issues, please open a GitHub issue or email yuvalkansal@princeton.edu for more information.
 
 ## 📜 License
 
 This project is licensed under the Princeton License - see the LICENSE file for details.
 
-## 🙏 Acknowledgments
+## 🙏 Acknowledgments & Related Work
 
-This work builds upon:
-- [Transformers](https://github.com/huggingface/transformers)
-- [TRL (Transformer Reinforcement Learning)](https://github.com/huggingface/trl)
-- [PEFT](https://github.com/huggingface/peft)
-- [DeepSpeed](https://github.com/microsoft/DeepSpeed)
+This work builds upon the following:
+
+**Knowledge Graph & QA:**
+- [QA-GNN: Reasoning with Language Models and Knowledge Graphs for Question Answering](https://aclanthology.org/2021.naacl-main.45/) (Yasunaga et al., NAACL 2021) — Our knowledge graph methodology is derived from this paradigm.
+
+- [Bottom-up Domain-specific Superintelligence: A Reliable Knowledge Graph is What We Need](https://arxiv.org/abs/2507.13966) (Dedhia et al., 2025) — Our data curation pipeline is derived from the outlined pipeline.
+
+**Libraries & Frameworks:**
+- [Transformers](https://github.com/huggingface/transformers) (Hugging Face)
+- [TRL — Transformer Reinforcement Learning](https://github.com/huggingface/trl) (GRPO, SFT)
+- [PEFT](https://github.com/huggingface/peft) (LoRA)
+- [DeepSpeed](https://github.com/microsoft/DeepSpeed) (ZeRO-3)
