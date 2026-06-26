@@ -1,75 +1,65 @@
 #!/bin/bash
-#SBATCH --job-name=kg_rl_training
+#SBATCH --job-name=kg_net_sft
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --partition=<YOUR_PARTITION>
-#SBATCH --gres=gpu:8
-#SBATCH --mem-per-cpu=80G
+#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:4
+#SBATCH --mem=480G
 #SBATCH --time=24:00:00
-#SBATCH --mail-type=all
-#SBATCH --mail-user=<YOUR_EMAIL>
-#SBATCH -o ./training_%j.out
+#SBATCH --output=logs/sft_%j.out
+#SBATCH --error=logs/sft_%j.err
+#
+# If your group/allocation requires it, uncomment and fill these in:
+##SBATCH --account=<YOUR_ACCOUNT>
+##SBATCH --mail-type=begin,end,fail
+##SBATCH --mail-user=<YOUR_NETID>@princeton.edu
 
 # ===================================================================
-# SLURM Template for Knowledge Graph-Guided RL Training
+# Della SLURM Template for Network Curriculum SFT
 # 
-# Replace the following placeholders:
-# - <YOUR_PARTITION>: Your cluster partition name
-# - <YOUR_EMAIL>: Your email for job notifications
-# - <YOUR_CONDA_ENV>: Your conda environment name
-# - <PATH_TO_REPO>: Path to this repository
-# - <PATH_TO_DATASET>: Path to your training dataset
-# - <PATH_TO_OUTPUT>: Path to save model checkpoints
+# Assumptions:
+# - Submit from the repository root with: sbatch configs/slurm_template.sh
+# - The conda environment is named kg-si-rl
+# - The converted HF dataset exists at datasets/network_curriculum
+# - For Qwen3-14B, prefer full A100/H200 GPUs rather than MIG slices
 # ===================================================================
 
-# Load required modules (adjust for your cluster)
+set -euo pipefail
+
 module purge
-module load anaconda3/2024.6
-module load cudatoolkit/12.8
-module load gcc/11
+module load anaconda3/2025.6
 
-# Activate your conda environment
-conda activate <YOUR_CONDA_ENV>
+conda activate kg-si-rl
 
-# Distributed training configuration
-export MASTER_ADDR=$(hostname)
-export MASTER_PORT=29500
-export WORLD_SIZE=8
+cd "${SLURM_SUBMIT_DIR}"
+mkdir -p logs
+
+# Keep large Hugging Face files off home. Override these before sbatch if your
+# group uses a different scratch convention.
+export HF_HOME="${HF_HOME:-/scratch/gpfs/${USER}/huggingface}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/scratch/gpfs/${USER}/hf_datasets}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}/hub}"
+mkdir -p "${HF_HOME}" "${HF_DATASETS_CACHE}" "${TRANSFORMERS_CACHE}"
+
 export NCCL_DEBUG=WARN
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-
-# Memory and compute optimizations
 export CUDA_MODULE_LOADING=EAGER
 export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128,garbage_collection_threshold:0.8,expandable_segments:True"
-export OMP_NUM_THREADS=16
-export MKL_NUM_THREADS=16
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export TOKENIZERS_PARALLELISM=false
 
-# CUDA library paths (adjust for your cluster)
-export CUDA_HOME=/usr/local/cuda-12.8
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+NPROC="${SLURM_GPUS_ON_NODE:-4}"
 
-# HuggingFace cache directory (optional)
-export HF_HOME=~/.cache/huggingface
+echo "Running on $(hostname)"
+echo "Submit dir: ${SLURM_SUBMIT_DIR}"
+echo "GPUs: ${NPROC}"
+echo "HF_HOME: ${HF_HOME}"
 
-# Navigate to repository
-cd <PATH_TO_REPO>
-
-# ===================================================================
-# Training Command
-# 
-# This example shows SFT training. For RL training, replace
-# sft_training.py with rl_training.py and adjust arguments.
-# ===================================================================
-
-echo "Starting training..."
-
-torchrun --nnodes=1 --nproc_per_node=8 \
-  --rdzv_id=100 --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+torchrun --standalone --nproc_per_node="${NPROC}" \
   sft_training.py \
   --model_name "Qwen/Qwen3-14B" \
-  --dataset_path "<PATH_TO_DATASET>" \
-  --output_dir "<PATH_TO_OUTPUT>" \
+  --dataset_path "datasets/network_curriculum" \
+  --output_dir "sft_models/qwen3-14b-network-lora" \
   --block_size 2048 \
   --learning_rate 2e-4 \
   --per_device_train_batch_size 1 \
@@ -85,8 +75,10 @@ echo "Training completed!"
 # ===================================================================
 # Notes:
 # 
-# 1. Multi-node training: Increase --nodes and adjust --nnodes
-# 2. Different GPU count: Adjust --gres=gpu:N and --nproc_per_node=N
-# 3. Memory issues: Reduce batch size or increase gradient accumulation
-# 4. For RL training: Use rl_training.py and add --sft_checkpoint_path
+# 1. To change GPU count, edit --gres=gpu:N. torchrun reads
+#    SLURM_GPUS_ON_NODE when available.
+# 2. If your dataset only exists as JSON, run:
+#      python convert_curriculum_dataset.py --overwrite
+# 3. For memory issues, reduce --block_size or increase gradient accumulation.
+# 4. For RL training, switch to rl_training.py and add --sft_checkpoint_path.
 # ===================================================================
