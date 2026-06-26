@@ -19,7 +19,7 @@
 # 
 # Assumptions:
 # - Submit from the repository root with: sbatch configs/slurm_template.sh
-# - The conda environment is named kg-si-rl
+# - The conda environment lives at /scratch/gpfs/JHA/hp9084/conda_envs/kg-si-rl
 # - The converted HF dataset exists at datasets/network_curriculum
 # - For Qwen3-14B, prefer full A100/H200 GPUs rather than MIG slices
 # ===================================================================
@@ -28,18 +28,21 @@ set -euo pipefail
 
 module purge
 module load anaconda3/2025.6
+module load cudatoolkit/12.8
+module load gcc/11
 
-conda activate kg-si-rl
+export SCRATCH_BASE=/scratch/gpfs/JHA/hp9084
+export TMPDIR="${SCRATCH_BASE}/tmp"
+export PIP_CACHE_DIR="${SCRATCH_BASE}/pip_cache"
+export HF_HOME="${HF_HOME:-${SCRATCH_BASE}/huggingface}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-${SCRATCH_BASE}/hf_datasets}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}/hub}"
+mkdir -p "${TMPDIR}" "${PIP_CACHE_DIR}" "${HF_HOME}" "${HF_DATASETS_CACHE}" "${TRANSFORMERS_CACHE}"
+
+conda activate "${SCRATCH_BASE}/conda_envs/kg-si-rl"
 
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
-
-# Keep large Hugging Face files off home. Override these before sbatch if your
-# group uses a different scratch convention.
-export HF_HOME="${HF_HOME:-/scratch/gpfs/${USER}/huggingface}"
-export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/scratch/gpfs/${USER}/hf_datasets}"
-export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}/hub}"
-mkdir -p "${HF_HOME}" "${HF_DATASETS_CACHE}" "${TRANSFORMERS_CACHE}"
 
 export NCCL_DEBUG=WARN
 export CUDA_MODULE_LOADING=EAGER
